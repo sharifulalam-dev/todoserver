@@ -15,7 +15,8 @@ const corsOptions = {
 app.use(cors(corsOptions));
 app.use(express.json());
 app.use(morgan("dev"));
-
+const username = process.env.MONGO_USERNAME;
+const password = process.env.MONGO_PASSWORD;
 // MongoDB connection URI
 const uri = `mongodb+srv://${username}:${password}@cluster0.lhbmo.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`;
 
