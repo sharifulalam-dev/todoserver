@@ -17,7 +17,8 @@ app.use(express.json());
 app.use(morgan("dev"));
 
 // MongoDB connection URI
-const uri = "mongodb://127.0.0.1:27017";
+const uri = `mongodb+srv://${username}:${password}@cluster0.lhbmo.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`;
+
 const client = new MongoClient(uri, {
   serverApi: {
     version: ServerApiVersion.v1,
