@@ -26,7 +26,7 @@ app.use(cookieParser());
 const username = process.env.MONGO_USERNAME;
 const password = process.env.MONGO_PASSWORD;
 
-const uri = `mongodb+srv://${username}:${password}@cluster0.lhbmo.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`;
+const uri = `mongodb+srv://${username}:${password}@cluster0.ey46t.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`;
 const client = new MongoClient(uri, {
   serverApi: {
     version: ServerApiVersion.v1,
