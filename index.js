@@ -8,13 +8,10 @@ const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 const cookieParser = require("cookie-parser");
 const jwt = require("jsonwebtoken");
 
-// ENV
 const port = process.env.PORT || 9000;
-// Replace JWT_SECRET with ACCESS_TOKEN_SECRET in .env
 const ACCESS_TOKEN_SECRET =
   process.env.ACCESS_TOKEN_SECRET || "mydefaultsecret";
 
-// EXPRESS
 const app = express();
 app.use(express.json());
 app.use(
@@ -26,7 +23,6 @@ app.use(
 app.use(morgan("dev"));
 app.use(cookieParser());
 
-// MONGODB SETUP
 const uri = "mongodb://127.0.0.1:27017";
 const client = new MongoClient(uri, {
   serverApi: {
@@ -46,13 +42,10 @@ async function initializeMongoDB() {
     db = client.db("todolist");
     usersCollection = db.collection("users");
     tasksCollection = db.collection("tasks");
-
-    // Create indexes for tasks: category + order, and userId
     await tasksCollection.createIndexes([
       { key: { category: 1, order: 1 } },
       { key: { userId: 1 } },
     ]);
-
     console.log("Connected to MongoDB successfully!");
   } catch (error) {
     console.error("Error connecting to MongoDB:", error);
@@ -68,6 +61,7 @@ const io = new Server(httpServer, {
     credentials: true,
   },
 });
+
 io.on("connection", (socket) => {
   console.log("New client connected:", socket.id);
   socket.on("disconnect", () => {
@@ -75,7 +69,6 @@ io.on("connection", (socket) => {
   });
 });
 
-// AUTH MIDDLEWARE
 function auth(req, res, next) {
   try {
     const token = req.cookies.token;
@@ -91,7 +84,6 @@ function auth(req, res, next) {
   }
 }
 
-// Start the server after DB initializes
 async function startServer() {
   await initializeMongoDB();
   httpServer.listen(port, () => {
@@ -100,9 +92,6 @@ async function startServer() {
 }
 startServer();
 
-// ======================= ROUTES ======================= //
-
-// 1) /users route - create/update user, issue JWT in a cookie
 app.post("/users", async (req, res) => {
   try {
     const { name, email, image } = req.body;
@@ -111,12 +100,8 @@ app.post("/users", async (req, res) => {
         .status(400)
         .json({ message: "email is required to store user data" });
     }
-
-    // Check if user with this email exists
     let user = await usersCollection.findOne({ email });
-
     if (!user) {
-      // Create new user document
       const newUserDoc = {
         name: name || "NoName",
         email,
@@ -126,7 +111,6 @@ app.post("/users", async (req, res) => {
       const result = await usersCollection.insertOne(newUserDoc);
       user = { ...newUserDoc, _id: result.insertedId };
     } else {
-      // Update user fields if needed
       const updates = {
         name: name || user.name,
         image: image || user.image,
@@ -134,18 +118,13 @@ app.post("/users", async (req, res) => {
       await usersCollection.updateOne({ _id: user._id }, { $set: updates });
       user = { ...user, ...updates };
     }
-
-    // Generate JWT referencing user._id
     const payload = { userId: user._id.toString() };
     const token = jwt.sign(payload, ACCESS_TOKEN_SECRET, { expiresIn: "1h" });
-
-    // Set a cookie named "token"
     res.cookie("token", token, {
       httpOnly: true,
-      secure: false, // set true if using HTTPS in production
+      secure: false,
       sameSite: "lax",
     });
-
     return res.status(200).json({ message: "User stored/updated", user });
   } catch (err) {
     console.error("Error in /users:", err);
@@ -155,14 +134,11 @@ app.post("/users", async (req, res) => {
   }
 });
 
-// 2) Logout - clears the cookie
 app.post("/logout", (req, res) => {
   res.clearCookie("token");
   return res.json({ message: "Logged out successfully." });
 });
 
-// 3) Protected tasks routes: require a valid JWT cookie
-// CREATE a new task
 app.post("/tasks", auth, async (req, res) => {
   try {
     const { title, description, category } = req.body;
@@ -179,31 +155,33 @@ app.post("/tasks", auth, async (req, res) => {
         .status(400)
         .json({ message: "Description must be 200 characters or less." });
     }
-
-    const userId = req.user.id; // from JWT
+    const userId = req.user.id;
     const cat = category || "To-Do";
-
-    // Calculate next order in this category for this user
+    const userDoc = await usersCollection.findOne({
+      _id: new ObjectId(userId),
+    });
+    if (!userDoc) {
+      return res
+        .status(404)
+        .json({ message: "User not found. Can't create task." });
+    }
     const maxOrderDoc = await tasksCollection
       .find({ userId, category: cat })
       .sort({ order: -1 })
       .limit(1)
       .toArray();
     const order = maxOrderDoc.length > 0 ? (maxOrderDoc[0].order || 0) + 1 : 0;
-
     const task = {
       title,
       description: description || "",
       category: cat,
       order,
-      userId, // store which user created it
+      userId,
+      userEmail: userDoc.email,
       createdAt: new Date(),
     };
-
     const result = await tasksCollection.insertOne(task);
     const newTask = { ...task, _id: result.insertedId };
-
-    // Inform other clients via Socket.IO
     io.emit("taskCreated", newTask);
     return res.status(201).json(newTask);
   } catch (error) {
@@ -214,7 +192,6 @@ app.post("/tasks", auth, async (req, res) => {
   }
 });
 
-// READ tasks for the logged-in user
 app.get("/tasks", auth, async (req, res) => {
   try {
     const userId = req.user.id;
@@ -231,14 +208,11 @@ app.get("/tasks", auth, async (req, res) => {
   }
 });
 
-// UPDATE a task
 app.put("/tasks/:id", auth, async (req, res) => {
   try {
     const { id } = req.params;
     const { title, description, category, order } = req.body;
     const userId = req.user.id;
-
-    // Find the original task
     const originalTask = await tasksCollection.findOne({
       _id: new ObjectId(id),
       userId,
@@ -246,7 +220,6 @@ app.put("/tasks/:id", auth, async (req, res) => {
     if (!originalTask) {
       return res.status(404).json({ message: "Task not found or not yours." });
     }
-
     const updateFields = {};
     if (title !== undefined) {
       if (!title) {
@@ -276,15 +249,12 @@ app.put("/tasks/:id", auth, async (req, res) => {
       }
       updateFields.order = order;
     }
-
     if (Object.keys(updateFields).length === 0) {
       return res
         .status(400)
         .json({ message: "No valid fields provided for update." });
     }
-
     updateFields.updatedAt = new Date();
-
     const result = await tasksCollection.updateOne(
       { _id: new ObjectId(id) },
       { $set: updateFields }
@@ -292,7 +262,6 @@ app.put("/tasks/:id", auth, async (req, res) => {
     if (result.modifiedCount === 0) {
       return res.status(400).json({ message: "No changes made to the task." });
     }
-
     const updatedTask = await tasksCollection.findOne({
       _id: new ObjectId(id),
     });
@@ -306,12 +275,10 @@ app.put("/tasks/:id", auth, async (req, res) => {
   }
 });
 
-// DELETE a task
 app.delete("/tasks/:id", auth, async (req, res) => {
   try {
     const { id } = req.params;
     const userId = req.user.id;
-
     const result = await tasksCollection.deleteOne({
       _id: new ObjectId(id),
       userId,
@@ -319,7 +286,6 @@ app.delete("/tasks/:id", auth, async (req, res) => {
     if (result.deletedCount === 0) {
       return res.status(404).json({ message: "Task not found or not yours." });
     }
-
     io.emit("taskDeleted", id);
     return res.status(200).json({ message: "Task deleted successfully." });
   } catch (error) {
@@ -330,12 +296,49 @@ app.delete("/tasks/:id", auth, async (req, res) => {
   }
 });
 
-// Optional reorder route
 app.post("/tasks/reorderColumn", auth, async (req, res) => {
-  return res.json({ message: "Implement reorder logic here" });
+  try {
+    const userId = req.user.id;
+    if (req.body.categoryUpdates) {
+      for (const col of req.body.categoryUpdates) {
+        const { category, tasks } = col;
+        if (!category || !Array.isArray(tasks)) {
+          return res
+            .status(400)
+            .json({ message: "Invalid data in categoryUpdates." });
+        }
+        for (const t of tasks) {
+          const filter = { _id: new ObjectId(t._id), userId };
+          const updateData = { order: t.order };
+          if (t.category) {
+            updateData.category = t.category;
+          }
+          await tasksCollection.updateOne(filter, { $set: updateData });
+        }
+      }
+      return res.status(200).json({ message: "Multiple columns reordered." });
+    } else {
+      const { category, tasks } = req.body;
+      if (!category || !Array.isArray(tasks)) {
+        return res
+          .status(400)
+          .json({ message: "Invalid reorder payload format." });
+      }
+      for (const t of tasks) {
+        const filter = { _id: new ObjectId(t._id), userId };
+        const updateData = { order: t.order };
+        await tasksCollection.updateOne(filter, { $set: updateData });
+      }
+      return res.status(200).json({ message: "Single column reordered." });
+    }
+  } catch (err) {
+    console.error("Error in reorderColumn:", err);
+    return res
+      .status(500)
+      .json({ message: "Internal server error", error: err.message });
+  }
 });
 
-// Root
 app.get("/", (req, res) => {
-  res.send("Hello from ToDo Backend with real user data + JWT!");
+  res.send("Hello from Backend!");
 });
