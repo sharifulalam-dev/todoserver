@@ -54,6 +54,7 @@ async function initializeMongoDB() {
       { key: { category: 1, order: 1 } },
       { key: { userId: 1 } },
     ]);
+    console.log("Connected to MongoDB successfully!");
   } catch (error) {
     console.error("Error connecting to MongoDB:", error);
     process.exit(1);
@@ -75,7 +76,10 @@ const io = new Server(httpServer, {
 });
 
 io.on("connection", (socket) => {
-  socket.on("disconnect", () => {});
+  console.log("New client connected:", socket.id);
+  socket.on("disconnect", () => {
+    console.log("Client disconnected:", socket.id);
+  });
 });
 
 function auth(req, res, next) {
@@ -129,11 +133,14 @@ app.post("/users", async (req, res) => {
     }
     const payload = { userId: user._id.toString() };
     const token = jwt.sign(payload, ACCESS_TOKEN_SECRET, { expiresIn: "1h" });
+
     res.cookie("token", token, {
       httpOnly: true,
-      secure: false,
+      // Use secure cookies if in production (HTTPS)
+      secure: process.env.NODE_ENV === "production",
       sameSite: "lax",
     });
+
     return res.status(200).json({ message: "User stored/updated", user });
   } catch (err) {
     console.error("Error in /users:", err);
@@ -350,4 +357,9 @@ app.post("/tasks/reorderColumn", auth, async (req, res) => {
 
 app.get("/", (req, res) => {
   res.send("Hello from Backend!");
+});
+
+// OPTIONAL: A catch-all 404 route if no previous routes match
+app.use((req, res) => {
+  res.status(404).json({ message: "Not Found" });
 });
