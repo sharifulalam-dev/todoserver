@@ -54,7 +54,6 @@ async function initializeMongoDB() {
       { key: { category: 1, order: 1 } },
       { key: { userId: 1 } },
     ]);
-    console.log("Connected to MongoDB successfully!");
   } catch (error) {
     console.error("Error connecting to MongoDB:", error);
     process.exit(1);
@@ -76,10 +75,7 @@ const io = new Server(httpServer, {
 });
 
 io.on("connection", (socket) => {
-  console.log("New client connected:", socket.id);
-  socket.on("disconnect", () => {
-    console.log("Client disconnected:", socket.id);
-  });
+  socket.on("disconnect", () => {});
 });
 
 function auth(req, res, next) {
