@@ -23,6 +23,6 @@ This is the backend for the Task Manager application, offering APIs for task cre
 
 1. **Clone the repository**:
    ```bash
-   git clone https://github.com/your-username/todo-server.git
+   git clone https://github.com/sharifulalam-dev/todoserver.git
    cd todo-server
    ```
