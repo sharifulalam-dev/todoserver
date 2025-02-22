@@ -30,7 +30,6 @@ app.use(cookieParser());
 
 const username = process.env.MONGO_USERNAME;
 const password = process.env.MONGO_PASSWORD;
-
 const uri = `mongodb+srv://${username}:${password}@cluster0.ey46t.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`;
 const client = new MongoClient(uri, {
   serverApi: {
@@ -136,8 +135,8 @@ app.post("/users", async (req, res) => {
 
     res.cookie("token", token, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === "production", // or always true if your site is always HTTPS
-      sameSite: "none",
+      secure: true, // Backend runs on HTTPS
+      sameSite: "none", // Allow cross-site cookies
     });
 
     return res.status(200).json({ message: "User stored/updated", user });
@@ -358,7 +357,6 @@ app.get("/", (req, res) => {
   res.send("Hello from Backend!");
 });
 
-// OPTIONAL: A catch-all 404 route if no previous routes match
 app.use((req, res) => {
   res.status(404).json({ message: "Not Found" });
 });
