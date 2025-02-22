@@ -135,8 +135,8 @@ app.post("/users", async (req, res) => {
 
     res.cookie("token", token, {
       httpOnly: true,
-      secure: true, // Backend runs on HTTPS
-      sameSite: "none", // Allow cross-site cookies
+      secure: true, 
+      sameSite: "none", 
     });
 
     return res.status(200).json({ message: "User stored/updated", user });
