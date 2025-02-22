@@ -23,7 +23,10 @@ app.use(
 app.use(morgan("dev"));
 app.use(cookieParser());
 
-const uri = "mongodb://127.0.0.1:27017";
+const username = process.env.MONGO_USERNAME;
+const password = process.env.MONGO_PASSWORD;
+
+const uri = `mongodb+srv://${username}:${password}@cluster0.lhbmo.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`;
 const client = new MongoClient(uri, {
   serverApi: {
     version: ServerApiVersion.v1,
