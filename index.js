@@ -16,7 +16,12 @@ const app = express();
 app.use(express.json());
 app.use(
   cors({
-    origin: ["http://localhost:5173", "http://localhost:5174,"https://todo-1dd5f.web.app","https://todo-1dd5f.firebaseapp.com"],
+    origin: [
+      "http://localhost:5173",
+      "http://localhost:5174",
+      "https://todo-1dd5f.web.app",
+      "https://todo-1dd5f.firebaseapp.com",
+    ],
     credentials: true,
   })
 );
