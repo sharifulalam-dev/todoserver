@@ -136,9 +136,8 @@ app.post("/users", async (req, res) => {
 
     res.cookie("token", token, {
       httpOnly: true,
-      // Use secure cookies if in production (HTTPS)
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "lax",
+      secure: process.env.NODE_ENV === "production", // or always true if your site is always HTTPS
+      sameSite: "none",
     });
 
     return res.status(200).json({ message: "User stored/updated", user });
