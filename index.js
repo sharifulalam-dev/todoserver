@@ -1,25 +1,33 @@
 require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
-const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 const morgan = require("morgan");
 const http = require("http");
 const { Server } = require("socket.io");
+const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
+const cookieParser = require("cookie-parser");
+const jwt = require("jsonwebtoken");
 
+// ENV
 const port = process.env.PORT || 9000;
+// Replace JWT_SECRET with ACCESS_TOKEN_SECRET in .env
+const ACCESS_TOKEN_SECRET =
+  process.env.ACCESS_TOKEN_SECRET || "mydefaultsecret";
+
+// EXPRESS
 const app = express();
-
-const corsOptions = {
-  origin: ["http://localhost:5173", "http://localhost:5174"],
-};
-app.use(cors(corsOptions));
 app.use(express.json());
+app.use(
+  cors({
+    origin: ["http://localhost:5173", "http://localhost:5174"],
+    credentials: true,
+  })
+);
 app.use(morgan("dev"));
-const username = process.env.MONGO_USERNAME;
-const password = process.env.MONGO_PASSWORD;
-// MongoDB connection URI
-const uri = `mongodb+srv://${username}:${password}@cluster0.lhbmo.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`;
+app.use(cookieParser());
 
+// MONGODB SETUP
+const uri = "mongodb://127.0.0.1:27017";
 const client = new MongoClient(uri, {
   serverApi: {
     version: ServerApiVersion.v1,
@@ -28,61 +36,136 @@ const client = new MongoClient(uri, {
   },
 });
 
+let db;
+let usersCollection;
+let tasksCollection;
+
 async function initializeMongoDB() {
   try {
     await client.connect();
-    console.log("Connected to MongoDB successfully!");
+    db = client.db("todolist");
+    usersCollection = db.collection("users");
+    tasksCollection = db.collection("tasks");
 
-    // Create indexes for the unified tasks collection
-    const db = client.db("todolist");
-    const tasksCollection = db.collection("tasks");
+    // Create indexes for tasks: category + order, and userId
     await tasksCollection.createIndexes([
       { key: { category: 1, order: 1 } },
       { key: { userId: 1 } },
     ]);
+
+    console.log("Connected to MongoDB successfully!");
   } catch (error) {
     console.error("Error connecting to MongoDB:", error);
     process.exit(1);
   }
 }
 
-initializeMongoDB();
-
-// Dummy User ID (for simplicity, this can be replaced with real user management)
-const dummyUserId = "test";
-
-// Unified tasks collection reference
-const db = client.db("todolist");
-const tasksCollection = db.collection("tasks");
-
-// Create HTTP server and attach Socket.io
 const httpServer = http.createServer(app);
 const io = new Server(httpServer, {
   cors: {
-    origin: [
-      "http://localhost:5173",
-      "http://localhost:5174",
-      "https://todo-1dd5f.web.app",
-      "https://todo-1dd5f.firebaseapp.com",
-    ],
+    origin: ["http://localhost:5173", "http://localhost:5174"],
     methods: ["GET", "POST", "PUT", "DELETE"],
+    credentials: true,
   },
 });
-
 io.on("connection", (socket) => {
   console.log("New client connected:", socket.id);
-
   socket.on("disconnect", () => {
     console.log("Client disconnected:", socket.id);
   });
 });
 
-// ----- API Endpoints ----- //
-
-// Create a new task
-app.post("/tasks", async (req, res) => {
+// AUTH MIDDLEWARE
+function auth(req, res, next) {
   try {
-    let { title, description, category } = req.body;
+    const token = req.cookies.token;
+    if (!token) {
+      return res.status(401).json({ message: "No token provided." });
+    }
+    const decoded = jwt.verify(token, ACCESS_TOKEN_SECRET);
+    req.user = { id: decoded.userId };
+    next();
+  } catch (error) {
+    console.error("Auth error:", error);
+    return res.status(401).json({ message: "Invalid token." });
+  }
+}
+
+// Start the server after DB initializes
+async function startServer() {
+  await initializeMongoDB();
+  httpServer.listen(port, () => {
+    console.log(`Todoapp running on port ${port}`);
+  });
+}
+startServer();
+
+// ======================= ROUTES ======================= //
+
+// 1) /users route - create/update user, issue JWT in a cookie
+app.post("/users", async (req, res) => {
+  try {
+    const { name, email, image } = req.body;
+    if (!email) {
+      return res
+        .status(400)
+        .json({ message: "email is required to store user data" });
+    }
+
+    // Check if user with this email exists
+    let user = await usersCollection.findOne({ email });
+
+    if (!user) {
+      // Create new user document
+      const newUserDoc = {
+        name: name || "NoName",
+        email,
+        image: image || null,
+        createdAt: new Date(),
+      };
+      const result = await usersCollection.insertOne(newUserDoc);
+      user = { ...newUserDoc, _id: result.insertedId };
+    } else {
+      // Update user fields if needed
+      const updates = {
+        name: name || user.name,
+        image: image || user.image,
+      };
+      await usersCollection.updateOne({ _id: user._id }, { $set: updates });
+      user = { ...user, ...updates };
+    }
+
+    // Generate JWT referencing user._id
+    const payload = { userId: user._id.toString() };
+    const token = jwt.sign(payload, ACCESS_TOKEN_SECRET, { expiresIn: "1h" });
+
+    // Set a cookie named "token"
+    res.cookie("token", token, {
+      httpOnly: true,
+      secure: false, // set true if using HTTPS in production
+      sameSite: "lax",
+    });
+
+    return res.status(200).json({ message: "User stored/updated", user });
+  } catch (err) {
+    console.error("Error in /users:", err);
+    return res
+      .status(500)
+      .json({ message: "Internal server error", error: err.message });
+  }
+});
+
+// 2) Logout - clears the cookie
+app.post("/logout", (req, res) => {
+  res.clearCookie("token");
+  return res.json({ message: "Logged out successfully." });
+});
+
+// 3) Protected tasks routes: require a valid JWT cookie
+// CREATE a new task
+app.post("/tasks", auth, async (req, res) => {
+  try {
+    const { title, description, category } = req.body;
     if (!title) {
       return res.status(400).json({ message: "Title is required." });
     }
@@ -96,12 +179,13 @@ app.post("/tasks", async (req, res) => {
         .status(400)
         .json({ message: "Description must be 200 characters or less." });
     }
-    category = category || "To-Do";
-    const tasksCollection = db.collection("tasks");
 
-    // Calculate order: find the highest order value in this category
+    const userId = req.user.id; // from JWT
+    const cat = category || "To-Do";
+
+    // Calculate next order in this category for this user
     const maxOrderDoc = await tasksCollection
-      .find({ userId: dummyUserId, category })
+      .find({ userId, category: cat })
       .sort({ order: -1 })
       .limit(1)
       .toArray();
@@ -110,13 +194,16 @@ app.post("/tasks", async (req, res) => {
     const task = {
       title,
       description: description || "",
-      category,
+      category: cat,
       order,
-      userId: dummyUserId,
+      userId, // store which user created it
       createdAt: new Date(),
     };
+
     const result = await tasksCollection.insertOne(task);
     const newTask = { ...task, _id: result.insertedId };
+
+    // Inform other clients via Socket.IO
     io.emit("taskCreated", newTask);
     return res.status(201).json(newTask);
   } catch (error) {
@@ -127,11 +214,12 @@ app.post("/tasks", async (req, res) => {
   }
 });
 
-// Get all tasks (sorted by order)
-app.get("/tasks", async (req, res) => {
+// READ tasks for the logged-in user
+app.get("/tasks", auth, async (req, res) => {
   try {
+    const userId = req.user.id;
     const tasks = await tasksCollection
-      .find({ userId: dummyUserId })
+      .find({ userId })
       .sort({ category: 1, order: 1 })
       .toArray();
     return res.status(200).json(tasks);
@@ -143,52 +231,72 @@ app.get("/tasks", async (req, res) => {
   }
 });
 
-app.put("/tasks/:id", async (req, res) => {
+// UPDATE a task
+app.put("/tasks/:id", auth, async (req, res) => {
   try {
-    const task = await tasksCollection.findOne({ _id: new ObjectId(id) });
-    console.log(task);
     const { id } = req.params;
-    const { category: newCategory, order: newOrder } = req.body;
-
-    // Validate the new category and order
-    if (!newCategory || typeof newOrder !== "number") {
-      return res.status(400).json({ message: "Invalid category or order." });
-    }
+    const { title, description, category, order } = req.body;
+    const userId = req.user.id;
 
     // Find the original task
     const originalTask = await tasksCollection.findOne({
       _id: new ObjectId(id),
-      userId: dummyUserId,
+      userId,
     });
-
     if (!originalTask) {
-      return res.status(404).json({ message: "Task not found." });
+      return res.status(404).json({ message: "Task not found or not yours." });
     }
 
-    // Update the task's category and order
-    const updateFields = {
-      category: newCategory,
-      order: newOrder,
-      updatedAt: new Date(),
-    };
+    const updateFields = {};
+    if (title !== undefined) {
+      if (!title) {
+        return res.status(400).json({ message: "Title cannot be empty." });
+      }
+      if (title.length > 50) {
+        return res
+          .status(400)
+          .json({ message: "Title must be 50 characters or less." });
+      }
+      updateFields.title = title;
+    }
+    if (description !== undefined) {
+      if (description.length > 200) {
+        return res
+          .status(400)
+          .json({ message: "Description must be 200 characters or less." });
+      }
+      updateFields.description = description;
+    }
+    if (category !== undefined) {
+      updateFields.category = category;
+    }
+    if (order !== undefined) {
+      if (typeof order !== "number") {
+        return res.status(400).json({ message: "Order must be a number." });
+      }
+      updateFields.order = order;
+    }
+
+    if (Object.keys(updateFields).length === 0) {
+      return res
+        .status(400)
+        .json({ message: "No valid fields provided for update." });
+    }
+
+    updateFields.updatedAt = new Date();
 
     const result = await tasksCollection.updateOne(
       { _id: new ObjectId(id) },
       { $set: updateFields }
     );
-
     if (result.modifiedCount === 0) {
       return res.status(400).json({ message: "No changes made to the task." });
     }
 
-    // Fetch the updated task
     const updatedTask = await tasksCollection.findOne({
       _id: new ObjectId(id),
     });
-
-    // Emit the task update to all connected clients
     io.emit("taskMoved", updatedTask);
-
     return res.status(200).json(updatedTask);
   } catch (error) {
     console.error("Error updating task:", error);
@@ -198,17 +306,20 @@ app.put("/tasks/:id", async (req, res) => {
   }
 });
 
-// Delete a task
-app.delete("/tasks/:id", async (req, res) => {
+// DELETE a task
+app.delete("/tasks/:id", auth, async (req, res) => {
   try {
     const { id } = req.params;
+    const userId = req.user.id;
+
     const result = await tasksCollection.deleteOne({
       _id: new ObjectId(id),
-      userId: dummyUserId,
+      userId,
     });
     if (result.deletedCount === 0) {
-      return res.status(404).json({ message: "Task not found." });
+      return res.status(404).json({ message: "Task not found or not yours." });
     }
+
     io.emit("taskDeleted", id);
     return res.status(200).json({ message: "Task deleted successfully." });
   } catch (error) {
@@ -219,11 +330,12 @@ app.delete("/tasks/:id", async (req, res) => {
   }
 });
 
-app.get("/", (req, res) => {
-  res.send("Hello from ToDo Backend...");
+// Optional reorder route
+app.post("/tasks/reorderColumn", auth, async (req, res) => {
+  return res.json({ message: "Implement reorder logic here" });
 });
 
-// Start the server
-httpServer.listen(port, () => {
-  console.log(`Todoapp running on port ${port}`);
+// Root
+app.get("/", (req, res) => {
+  res.send("Hello from ToDo Backend with real user data + JWT!");
 });
