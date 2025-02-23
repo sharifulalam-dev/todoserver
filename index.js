@@ -68,6 +68,7 @@ const io = new Server(httpServer, {
       "http://localhost:5174",
       "https://todo-1dd5f.web.app",
       "https://todo-1dd5f.firebaseapp.com",
+      "https://phtodoapp.netlify.app",
     ],
     methods: ["GET", "POST", "PUT", "DELETE"],
     credentials: true,
@@ -135,8 +136,8 @@ app.post("/users", async (req, res) => {
 
     res.cookie("token", token, {
       httpOnly: true,
-      secure: true, 
-      sameSite: "none", 
+      secure: true,
+      sameSite: "none",
     });
 
     return res.status(200).json({ message: "User stored/updated", user });
